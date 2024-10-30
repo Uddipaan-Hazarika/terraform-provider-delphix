@@ -16,6 +16,38 @@ const (
 	ERROR                  string = "[ERROR] "
 )
 
+var updatableEnvKeys = map[string]bool{
+	"name":               true,
+	"cluster_home":       true,
+	"connector_port":     true,
+	"username":           true,
+	"password":           true,
+	"description":        true,
+	"allow_provisioning": true,
+	"is_staging":         true,
+	"version":            true,
+	"oracle_base":        true,
+	"bits":               true,
+	"tags":               true,
+	"hosts":              true,
+}
+
+var isDestructiveEnvUpdate = map[string]bool{
+	"name":               false,
+	"cluster_home":       true,
+	"connector_port":     true,
+	"username":           true,
+	"password":           true,
+	"description":        false,
+	"allow_provisioning": false,
+	"is_staging":         false,
+	"version":            false,
+	"oracle_base":        false,
+	"bits":               false,
+	"tags":               false,
+	"hosts":              true,
+}
+
 var updatableVdbKeys = map[string]bool{
 	"name":                          true,
 	"db_username":                   true,

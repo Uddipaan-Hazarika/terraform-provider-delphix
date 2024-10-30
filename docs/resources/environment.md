@@ -164,17 +164,17 @@ resource "delphix_environment" "fc-tgt-cluster" {
 
 * `engine_id` - (Required) The DCT ID of the Engine on which to create the environment. This ID can be obtained by querying the DCT engines API. A Delphix Engine must be registered with DCT first for it to create an Engine ID.
 * `os_name` - (Required) Operating system type of the environment. Valid values are `[UNIX, WINDOWS]`
-* `hostname` - (Required) Host Name or IP Address of the host that being added to Delphix.
-* `name` - The name of the environment.
+* `hostname` - (Required) [Updatable] Host Name or IP Address of the host that being added to Delphix.
+* `name` - [Updatable] The name of the environment.
 * `is_cluster` - Whether the environment to be created is a cluster.
-* `cluster_home` - Absolute path to cluster home drectory. This parameter is (Required) for UNIX cluster environments.
+* `cluster_home` - [Updatable] Absolute path to cluster home drectory. This parameter is (Required) for UNIX cluster environments.
 * `staging_environment` - Id of the environment where Delphix Connector is installed. This is a (Required) parameter when creating Windows source environments.
-* `connector_port` - Specify port on which Delphix connector will run. This is a (Required) parameter when creating Windows target environments.
+* `connector_port` - [Updatable] Specify port on which Delphix connector will run. This is a (Required) parameter when creating Windows target environments.
 * `is_target` - Whether the environment to be created is a target cluster environment. This property is used only when creating Windows cluster environments.
-* `ssh_port` - ssh port of the environment.
-* `toolkit_path` - The path where Delphix toolkit can be pushed.
-* `username` - OS username for Delphix.
-* `password` - OS user's password.
+* `ssh_port` - [Updatable] ssh port of the environment.
+* `toolkit_path` - [Updatable] The path where Delphix toolkit can be pushed.
+* `username` - [Updatable] OS username for Delphix.
+* `password` - [Updatable] OS user's password.
 * `vault` - The name or reference of the vault from which to read the host credentials.
 * `hashicorp_vault_engine` - Vault engine name where the credential is stored.
 * `hashicorp_vault_secret_path` - Path in the vault engine where the credential is stored.
@@ -183,7 +183,7 @@ resource "delphix_environment" "fc-tgt-cluster" {
 * `cyberark_vault_query_string` - Query to find a credential in the CyberArk vault.
 * `use_kerberos_authentication` - Whether to use kerberos authentication.
 * `use_engine_public_key` - Whether to use public key authentication.
-* `nfs_addresses` - Array of ip address or hostnames. Valid values are a list of addresses. For eg: `["192.168.10.2"]`
+* `nfs_addresses` - [Updatable] Array of ip address or hostnames. Valid values are a list of addresses. For eg: `["192.168.10.2"]`
 * `ase_db_username` - Username for the SAP ASE database.
 * `ase_db_password` - Password for the SAP ASE database.
 * `ase_db_vault` - The name or reference of the vault from which to read the ASE database credentials.
@@ -199,8 +199,8 @@ resource "delphix_environment" "fc-tgt-cluster" {
 * `dsp_keystore_alias` - DSP keystore alias.
 * `dsp_truststore_path` - DSP truststore path.
 * `dsp_truststore_password` - DSP truststore password.
-* `description` - The environment description.
-* `tags` - The tags to be created for this environment. This is a map of 2 parameters:
+* `description` - [Updatable] The environment description.
+* `tags` - [Updatable] The tags to be created for this environment. This is a map of 2 parameters:
   * `key` - (Required) Key of the tag
   * `value` - (Required) Value of the tag
 
