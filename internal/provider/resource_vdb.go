@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -1535,9 +1536,22 @@ func resourceVdbRead(ctx context.Context, d *schema.ResourceData, meta interface
 	client := meta.(*apiClient).client
 
 	vdbId := d.Id()
-
+	// debugging if there are errors in api response
 	res, diags := PollForObjectExistence(ctx, func() (interface{}, *http.Response, error) {
-		return client.VDBsAPI.GetVdbById(ctx, vdbId).Execute()
+		vdb, httpresTest, errTest := client.VDBsAPI.GetVdbById(ctx, vdbId).Execute()
+		tflog.Warn(ctx, "Response from API >>>>>> "+vdb.GetId())
+		tflog.Warn(ctx, fmt.Sprintf("IsAppdata value: %v", vdb.GetIsAppdata()))
+		if vdb != nil {
+			serializedMap, err := vdb.ToMap()
+			if err != nil {
+				fmt.Println("Error in serialising after api response")
+			}
+			tflog.Warn(ctx, fmt.Sprintf("Serialised value after API response: %v", serializedMap))
+		} else {
+			tflog.Warn(ctx, "Error in serialising after API response.")
+		}
+
+		return vdb, httpresTest, errTest
 	})
 
 	if res == nil {
@@ -1558,13 +1572,31 @@ func resourceVdbRead(ctx context.Context, d *schema.ResourceData, meta interface
 			tflog.Error(ctx, DLPX+ERROR+"Error reading the VDB "+vdbId+", removing from state. ")
 			d.SetId("")
 		}
-
 		return nil
 	}
 
 	result, ok := res.(*dctapi.VDB)
 	if !ok {
 		return diag.Errorf("Error occured in type casting.")
+	}
+
+	if result == nil {
+		tflog.Warn(ctx, "Result is empty")
+	}
+
+	// debugging if there are errors in type assertion
+	tflog.Warn(ctx, "The result after the type assertion: "+result.GetId())
+	tflog.Warn(ctx, fmt.Sprintf("IsAppdata value: %v", result.GetIsAppdata()))
+	tflog.Warn(ctx, fmt.Sprintf("%v", result))
+	if result != nil {
+		serializedResult, errRes := result.ToMap()
+		if errRes != nil {
+			tflog.Warn(ctx, "error has occured in errRes during type assertion")
+			tflog.Warn(ctx, fmt.Sprintf("%v", errRes))
+		}
+		tflog.Warn(ctx, fmt.Sprintf("Serialised value after type Assertion: %v", serializedResult))
+	} else {
+		tflog.Warn(ctx, "Error in serialising after type assertion.")
 	}
 
 	d.Set("database_type", result.GetDatabaseType())
@@ -1591,7 +1623,11 @@ func resourceVdbRead(ctx context.Context, d *schema.ResourceData, meta interface
 	d.Set("post_stop", flattenHooks(result.GetHooks().PostStop))
 	d.Set("pre_rollback", flattenHooks(result.GetHooks().PreRollback))
 	d.Set("post_rollback", flattenHooks(result.GetHooks().PostRollback))
-	if !*result.IsAppdata {
+	// if !*result.IsAppdata {
+	// 	d.Set("database_name", result.GetDatabaseName())
+	// }
+
+	if !result.GetIsAppdata() {
 		d.Set("database_name", result.GetDatabaseName())
 	}
 
