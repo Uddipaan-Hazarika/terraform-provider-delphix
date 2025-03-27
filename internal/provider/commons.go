@@ -110,3 +110,49 @@ var updatableOracleDsourceKeys = map[string]bool{
 	"ops_pre_log_sync":           true,
 	"ops_post_sync":              true,
 }
+
+var updatableEnvKeys = map[string]bool{
+	"name":               true,
+	"cluster_home":       true,
+	"connector_port":     true,
+	"username":           true,
+	"password":           true,
+	"description":        true,
+	"allow_provisioning": true,
+	"is_staging":         true,
+	"version":            true,
+	"oracle_base":        true,
+	"bits":               true,
+	"tags":               true,
+	"hosts":              true,
+	// "java_home":      true,
+	// "hostname":                       true,
+	// "ssh_port":                       true,
+	// "toolkit_path":                   true,
+	// "nfs_addresses":                  true,
+	// "oracle_tde_keystores_root_path": true,
+
+}
+
+var isDestructiveEnvUpdate = map[string]bool{
+	"name":               false,
+	"cluster_home":       true,
+	"connector_port":     true,
+	"username":           true,
+	"password":           true,
+	"description":        false,
+	"allow_provisioning": false,
+	"is_staging":         false,
+	"version":            false,
+	"oracle_base":        false,
+	"bits":               false,
+	"tags":               false,
+	"hosts":              true,
+	// "java_home":                      false,
+	// "hostname":                       true,
+	// "ssh_port":                       true,
+	// "toolkit_path":                   true,
+	// "nfs_addresses":                  true,
+	// "oracle_tde_keystores_root_path": true,
+
+}
