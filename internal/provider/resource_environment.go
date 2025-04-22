@@ -630,6 +630,7 @@ func resourceEnvironmentUpdate(ctx context.Context, d *schema.ResourceData, meta
 	var vdbs []dctapi.VDB
 	var vdbDiags, dsourceDiags diag.Diagnostics
 	var disableDsourceFailure bool = false
+	rollbackActions := []func() error{}
 	// if changedKeys contains non updatable field set a flag
 	for _, key := range modifiedChangedKeys {
 		if !updatableEnvKeys[key] {
@@ -759,6 +760,42 @@ func resourceEnvironmentUpdate(ctx context.Context, d *schema.ResourceData, meta
 				// return diag.Errorf("[NOT OK] Job %s %s with error %s", *res.Job.Id, job_res, job_err)
 			}
 		}
+
+		// Add rollback action for UpdateEnvironment
+		rollbackActions = append(rollbackActions, func() error {
+			tflog.Info(ctx, "Rolling back UpdateEnvironment")
+			// Capture the original value before the update
+			oldName, _ := d.GetChange("name")
+			oldClusterHome, _ := d.GetChange("cluster_home")
+			oldDescription, _ := d.GetChange("description")
+			// Reset parameters to their original values
+			envUpdateParam.SetName(oldName.(string))
+			envUpdateParam.SetClusterHome(oldClusterHome.(string))
+			envUpdateParam.SetDescription(oldDescription.(string))
+
+			// Execute the rollback API call
+			res, _, rollbackErr := client.EnvironmentsAPI.UpdateEnvironment(ctx, environmentId).EnvironmentUpdateParameters(*envUpdateParam).Execute()
+			if rollbackErr != nil {
+				tflog.Error(ctx, "Rollback API call for UpdateEnvironment failed: "+rollbackErr.Error())
+				return rollbackErr
+			}
+
+			// Poll the job status to ensure the rollback is complete
+			if res != nil && res.Job != nil {
+				jobRes, jobErr := PollJobStatus(res.Job.GetId(), ctx, client)
+				if jobErr != "" {
+					tflog.Error(ctx, "Rollback job polling failed for UpdateEnvironment: "+jobErr)
+					return fmt.Errorf("rollback job polling failed: %s", jobErr)
+				}
+				if isJobTerminalFailure(jobRes) {
+					tflog.Error(ctx, "Rollback job failed for UpdateEnvironment: "+jobRes)
+					return fmt.Errorf("rollback job failed: %s", jobRes)
+				}
+				tflog.Info(ctx, "Rollback job succeeded for UpdateEnvironment")
+			}
+
+			return nil
+		})
 	}
 	if d.HasChanges(
 		"username",
@@ -829,7 +866,109 @@ func resourceEnvironmentUpdate(ctx context.Context, d *schema.ResourceData, meta
 				// return diag.Errorf("[NOT OK] Job %s %s with error %s", *resEnvUser.Job.Id, job_res, job_err)
 			}
 		}
+		if d.HasChanges(
+			"username",
+			"password",
+		) {
+			tflog.Info(ctx, "envUser")
+			// envUser Update
+			envUserUpdateParam := dctapi.NewEnvironmentUserParams()
+			if d.HasChange("username") || d.HasChange("password") {
+				if v, has_v := d.GetOk("username"); has_v {
+					envUserUpdateParam.SetUsername(v.(string))
+				}
+				if v, has_v := d.GetOk("password"); has_v {
+					envUserUpdateParam.SetPassword(v.(string))
+				}
+			}
+			// get the user ref
+			tflog.Info(ctx, "Getting the userlist")
+			resUserList, httpResUserList, errUserList := client.EnvironmentsAPI.ListEnvironmentUsers(ctx, environmentId).Execute()
+			if diags := apiErrorResponseHelper(ctx, resUserList, httpResUserList, errUserList); diags != nil {
+				revertChanges(d, changedKeys)
+				return diags
+			}
 
+			var user_ref string
+
+			username, _ := d.GetChange("username")
+			for _, users := range resUserList.GetUsers() {
+				tflog.Info(ctx, "Getting the users: "+users.GetUsername())
+				if strings.EqualFold(users.GetUsername(), username.(string)) {
+					user_ref = users.GetUserRef()
+					break
+				}
+			}
+			if user_ref == "" {
+				revertChanges(d, changedKeys)
+				return diag.Errorf("no matching user found in the environment list to update")
+			}
+
+			// this is to propagate the value to read call which is defined at the end.
+			// we will use the user_ref to filter from the list of users in the env
+			tflog.Info(ctx, "Setting the user_ref: "+user_ref)
+			d.Set("user_ref", user_ref)
+
+			tflog.Info(ctx, "Updating the user: "+user_ref)
+			resEnvUser, httpResEnvUser, errEnvUser := client.EnvironmentsAPI.UpdateEnvironmentUser(ctx, environmentId, user_ref).EnvironmentUserParams(*envUserUpdateParam).Execute()
+			if diags := apiErrorResponseHelper(ctx, resEnvUser, httpResEnvUser, errEnvUser); diags != nil {
+				revertChanges(d, changedKeys)
+				updateFailure = true
+				if len(diags) > 0 {
+					failureEvents = append(failureEvents, diags[0].Summary)
+				} else {
+					tflog.Warn(ctx, "UpdateEnvironmentUser Diagnostics is empty or nil; skipping appending to failureEvents")
+				}
+			}
+
+			if resEnvUser != nil {
+				job_res, job_err := PollJobStatus(resEnvUser.Job.GetId(), ctx, client)
+				if job_err != "" {
+					tflog.Warn(ctx, DLPX+WARN+"Env User Update Job Polling failed but continuing with update. Error: "+job_err)
+				}
+				tflog.Info(ctx, DLPX+INFO+"Job result is "+job_res)
+				if job_res == Failed || job_res == Canceled || job_res == Abandoned {
+					tflog.Error(ctx, DLPX+ERROR+"Job "+job_res+" "+resEnvUser.Job.GetId()+"!")
+					revertChanges(d, changedKeys)
+					updateFailure = true
+					failureEvents = append(failureEvents, job_err)
+					// return diag.Errorf("[NOT OK] Job %s %s with error %s", *resEnvUser.Job.Id, job_res, job_err)
+				}
+			}
+			oldUsername, _ := d.GetChange("username")
+			oldPassword, _ := d.GetChange("password")
+			rollbackActions = append(rollbackActions, func() error {
+				tflog.Info(ctx, "Rolling back UpdateEnvironmentUser")
+
+				// Reset parameters to their original values
+				envUserUpdateParam := dctapi.NewEnvironmentUserParams()
+				envUserUpdateParam.SetUsername(oldUsername.(string))
+				envUserUpdateParam.SetPassword(oldPassword.(string))
+
+				// Execute the rollback API call
+				res, _, rollbackErr := client.EnvironmentsAPI.UpdateEnvironmentUser(ctx, environmentId, user_ref).EnvironmentUserParams(*envUserUpdateParam).Execute()
+				if rollbackErr != nil {
+					tflog.Error(ctx, "Rollback API call for UpdateEnvironmentUser failed: "+rollbackErr.Error())
+					return rollbackErr
+				}
+
+				// Poll the job status to ensure the rollback is complete
+				if res != nil && res.Job != nil {
+					jobRes, jobErr := PollJobStatus(res.Job.GetId(), ctx, client)
+					if jobErr != "" {
+						tflog.Error(ctx, "Rollback job polling failed for UpdateEnvironmentUser: "+jobErr)
+						return fmt.Errorf("rollback job polling failed: %s", jobErr)
+					}
+					if isJobTerminalFailure(jobRes) {
+						tflog.Error(ctx, "Rollback job failed for UpdateEnvironmentUser: "+jobRes)
+						return fmt.Errorf("rollback job failed: %s", jobRes)
+					}
+					tflog.Info(ctx, "Rollback job succeeded for UpdateEnvironmentUser")
+				}
+
+				return nil
+			})
+		}
 	}
 	if d.HasChanges(
 		"hosts",
@@ -845,6 +984,10 @@ func resourceEnvironmentUpdate(ctx context.Context, d *schema.ResourceData, meta
 		// signifies the hostname that will be updated
 		oldHost := oldHosts.([]interface{})
 		oldHostName := oldHost[0].(map[string]interface{})["hostname"].(string)
+		oldSshPort := int64(oldHost[0].(map[string]interface{})["ssh_port"].(int))
+		oldToolkitPath := oldHost[0].(map[string]interface{})["toolkit_path"].(string)
+		oldJavaHome := oldHost[0].(map[string]interface{})["java_home"].(string)
+		oldNfsAddress := oldHost[0].(map[string]interface{})["nfs_addresses"]
 
 		// retrieving new params for the update
 		newHost := newHosts.([]interface{})
@@ -927,7 +1070,42 @@ func resourceEnvironmentUpdate(ctx context.Context, d *schema.ResourceData, meta
 				}
 			}
 		}
+		rollbackActions = append(rollbackActions, func() error {
+			tflog.Info(ctx, "Rolling back UpdateHost")
 
+			// Reset parameters to their original values
+			hostUpdateParam := dctapi.NewHostUpdateParameters()
+			hostUpdateParam.SetHostname(oldHostName)
+			hostUpdateParam.SetSshPort(oldSshPort)
+			hostUpdateParam.SetToolkitPath(oldToolkitPath)
+			hostUpdateParam.SetJavaHome(oldJavaHome)
+			if oldNfsAddress != nil {
+				hostUpdateParam.SetNfsAddresses(toStringArray(oldNfsAddress))
+			}
+
+			// Execute the rollback API call
+			res, _, rollbackErr := client.EnvironmentsAPI.UpdateHost(ctx, environmentId, hostId).HostUpdateParameters(*hostUpdateParam).Execute()
+			if rollbackErr != nil {
+				tflog.Error(ctx, "Rollback API call for UpdateHost failed: "+rollbackErr.Error())
+				return rollbackErr
+			}
+
+			// Poll the job status to ensure the rollback is complete
+			if res != nil && res.Job != nil {
+				jobRes, jobErr := PollJobStatus(res.Job.GetId(), ctx, client)
+				if jobErr != "" {
+					tflog.Error(ctx, "Rollback job polling failed for UpdateHost: "+jobErr)
+					return fmt.Errorf("rollback job polling failed: %s", jobErr)
+				}
+				if isJobTerminalFailure(jobRes) {
+					tflog.Error(ctx, "Rollback job failed for UpdateHost: "+jobRes)
+					return fmt.Errorf("rollback job failed: %s", jobRes)
+				}
+				tflog.Info(ctx, "Rollback job succeeded for UpdateHost")
+			}
+
+			return nil
+		})
 	}
 	if d.HasChanges(
 		"tags",
@@ -961,8 +1139,43 @@ func resourceEnvironmentUpdate(ctx context.Context, d *schema.ResourceData, meta
 					return diags
 				}
 			}
-		}
+			rollbackActions = append(rollbackActions, func() error {
+				tflog.Info(ctx, "Rolling back tags update")
 
+				// Delete the new tags (if any)
+				if len(toTagArray(newTag)) != 0 {
+					tflog.Info(ctx, "Deleting new tags")
+					deleteTag := *dctapi.NewDeleteTag()
+					_, rollbackErr := client.EnvironmentsAPI.DeleteEnvironmentTags(ctx, environmentId).DeleteTag(deleteTag).Execute()
+					if rollbackErr != nil {
+						tflog.Error(ctx, "Rollback API call for deleting new tags failed: "+rollbackErr.Error())
+						return rollbackErr
+					}
+				}
+
+				// Recreate the old tags
+				if len(toTagArray(oldTag)) != 0 {
+					tflog.Info(ctx, "Recreating old tags")
+					_, _, rollbackErr := client.EnvironmentsAPI.CreateEnvironmentTags(ctx, environmentId).TagsRequest(*dctapi.NewTagsRequest(toTagArray(oldTag))).Execute()
+					if rollbackErr != nil {
+						tflog.Error(ctx, "Rollback API call for recreating old tags failed: "+rollbackErr.Error())
+						return rollbackErr
+					}
+				}
+
+				tflog.Info(ctx, "Rollback for tags update completed successfully")
+				return nil
+			})
+		}
+	}
+	if updateFailure {
+		tflog.Error(ctx, "Update failed, rolling back changes")
+		for i := len(rollbackActions) - 1; i >= 0; i-- {
+			if err := rollbackActions[i](); err != nil {
+				tflog.Error(ctx, "Rollback failed: "+err.Error())
+			}
+		}
+		return diag.Errorf("Update failed with errors: %v", failureEvents)
 	}
 
 	if destructiveUpdate {
